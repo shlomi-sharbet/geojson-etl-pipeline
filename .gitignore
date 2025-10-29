@@ -1,0 +1,37 @@
+# קבצי system ו-temp
+.DS_Store
+Thumbs.db
+
+# תיקיות סביבה וירטואלית Python
+venv/
+.env
+
+# קבצי לוג
+*.log
+
+# קבצי קומפילציה/בינארי
+*.exe
+*.dll
+*.class
+
+# תיקיית build/project artifacts
+build/
+dist/
+
+
+terraform.tfstate*
+terraform.tfstate
+
+terraform.tfstate.backup*
+terraform.tfstate.backup
+
+
+.terraform.lock.hcl*
+.terraform.lock.hcl
+
+.terraform/
+
+
+DevOps Assignment July, 2025.pdf
+
+#.gitignore
