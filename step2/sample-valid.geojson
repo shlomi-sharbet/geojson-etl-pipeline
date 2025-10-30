@@ -1,0 +1,19 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "properties": { "name": "Sample point", "src": "demo" },
+        "geometry": { "type": "Point", "coordinates": [100.0, 0.5] }
+      },
+      {
+        "type": "Feature",
+        "properties": { "name": "Sample polygon", "src": "demo" },
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [[[100.0, 0.0],[101.0, 0.0],[101.0, 1.0],[100.0, 1.0],[100.0, 0.0]]]
+        }
+      }
+    ]
+  }
+  

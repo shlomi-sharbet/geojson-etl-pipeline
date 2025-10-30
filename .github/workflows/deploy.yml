@@ -1,0 +1,80 @@
+name: CI/CD LocalStack Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      AWS_DEFAULT_REGION: us-east-1
+
+    steps:
+    # 1) Clone repo
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # 2) Terraform apply (step1): יצירת תשתית, ECR, Bucket, DB וכו'
+    - name: Terraform init & apply infra (step1)
+      working-directory: step1
+      run: |
+        terraform init
+        terraform apply -auto-approve
+
+    # 3) שלב בניית התמונה ודחיפה ל-ECR (מחכה ש-ECR קיים ב-step1)
+    - name: Resolve ECR repository URL
+      id: ecr
+      run: |
+        REPO_URL=$(awslocal ecr describe-repositories --query "repositories[?repositoryName=='asterra/geojson-processor'].repositoryUri" --output text)
+        if [ -z "$REPO_URL" ]; then
+          echo "ECR repository not found. Run terraform in step1 first."
+          exit 1
+        fi
+        echo "repo_url=$REPO_URL" >> $GITHUB_OUTPUT
+
+    - name: Login to LocalStack ECR
+      run: |
+        REGISTRY=$(echo "${{ steps.ecr.outputs.repo_url }}" | cut -d'/' -f1)
+        awslocal ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$REGISTRY"
+
+    - name: Build and push Lambda image (from step2)
+      working-directory: step2
+      run: |
+        IMAGE_TAG=latest
+        REPO_URL="${{ steps.ecr.outputs.repo_url }}"
+        docker build -t geojson-processor:${IMAGE_TAG} -f Dockerfile .
+        docker tag geojson-processor:${IMAGE_TAG} ${REPO_URL}:${IMAGE_TAG}
+        docker push ${REPO_URL}:${IMAGE_TAG}
+
+    # 4) Terraform apply (step2): יצירת Lambda שמצביעה לתמונה החדשה ב-ECR
+    - name: Terraform init & apply Lambda/app (step2)
+      working-directory: step2
+      run: |
+        terraform init
+        terraform apply -auto-approve
+
+    # 5) בדיקות אינטגרציה: העלאת GeoJSONs ל-S3 ובדיקת לוגים
+    - name: Integration test upload GeoJSON & logs
+      run: |
+        BUCKET="asterra-geojson-ingestion-bucket"
+        awslocal s3 cp step2/sample-valid.geojson   s3://${BUCKET}/sample-valid.geojson
+        awslocal s3 cp step2/sample-invalid.geojson s3://${BUCKET}/sample-invalid.geojson
+
+        sleep 3  # הלמבדא בלוקאלסטאק עובדת מהר, אבל רצוי להמתין מעט ללוגים
+
+        LOG_GROUP="/aws/lambda/geojson-processor"
+        STREAM=$(awslocal logs describe-log-streams --log-group-name "$LOG_GROUP" \
+                 --order-by LastEventTime --descending --limit 1 \
+                 --query 'logStreams[0].logStreamName' --output text)
+
+        echo "Latest stream: $STREAM"
+        awslocal logs get-log-events --log-group-name "$LOG_GROUP" --log-stream-name "$STREAM" --start-from-head
+
+        awslocal logs get-log-events --log-group-name "$LOG_GROUP" --log-stream-name "$STREAM" --start-from-head \
+          | grep "Inserted" && echo "Insertion log found ✅" || (echo "No insert log! ❌" && exit 1)
+        awslocal logs get-log-events --log-group-name "$LOG_GROUP" --log-stream-name "$STREAM" --start-from-head \
+          | grep "ValueError: GeoJSON features missing/empty" && echo "Validation error found ✅" || (echo "No validation error! ❌" && exit 1)
+
